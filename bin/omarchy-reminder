@@ -24,15 +24,23 @@ next_day() {
   date -d "$1 12:00 tomorrow" +%F
 }
 
-# Epoch for a wall-clock HH:MM on a calendar day. A time skipped by a
-# daylight-saving jump is read at the offset in force before the jump, landing
-# past it by the jump's actual length, as JavaScript dates do.
+# Epoch for a wall-clock HH:MM on a calendar day, resolving daylight-saving
+# edges the way JavaScript dates do so the scheduled time matches the prompt's
+# preview: a time skipped by a jump is read at the offset in force before it,
+# and a time repeated by a fall back takes its first occurrence. GNU date
+# picks either occurrence depending on the zone.
 local_time_epoch() {
-  local day=$1 clock=$2 offset_before
+  local day=$1 clock=$2 offset_before before epoch
 
-  if ! date -d "$day $clock" +%s 2>/dev/null; then
-    offset_before=$(date -d "@$(($(TZ=UTC date -d "$day $clock" +%s) - 86400))" +%z)
-    date -d "$day $clock $offset_before" +%s 2>/dev/null
+  offset_before=$(date -d "@$(($(TZ=UTC date -d "$day $clock" +%s) - 86400))" +%z)
+  before=$(date -d "$day $clock $offset_before" +%s 2>/dev/null) || return 1
+
+  if ! epoch=$(date -d "$day $clock" +%s 2>/dev/null); then
+    echo "$before"
+  elif [[ $(date -d "@$before" '+%F %H:%M') == "$day $clock" ]] && ((before < epoch)); then
+    echo "$before"
+  else
+    echo "$epoch"
   fi
 }
 

@@ -82,6 +82,16 @@ assertEqual(
 )
 JS
 
+TZ=Europe/Berlin run_node_test <<'JS'
+const reminders = requireFromRoot('shell/plugins/reminders/ReminderFlowModel.js')
+
+assertEqual(
+  reminders.describe(reminders.parseWhen('2:30am'), new Date(2026, 9, 25, 0, 30)),
+  '2:30 AM today · in 2h',
+  'reminders preview the first of a repeated time'
+)
+JS
+
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -162,6 +172,12 @@ assert_timer "--on-calendar=2026-03-08 07:30:00 UTC" "reminder cli moves a skipp
 
 schedule "2026-11-01 00:30" 1:30am
 assert_timer "--on-calendar=2026-11-01 05:30:00 UTC" "reminder cli picks the first of a repeated time"
+
+REMINDER_TZ=Europe/Berlin schedule "2026-10-25 00:30" 2:30am
+assert_timer "--on-calendar=2026-10-25 00:30:00 UTC" "reminder cli picks the first of a repeated time where date would not"
+
+REMINDER_TZ=Europe/Berlin schedule "2026-10-24 13:00" "tomorrow 9am"
+assert_timer "--on-calendar=2026-10-25 08:00:00 UTC" "reminder cli keeps times after a fall back on the new offset"
 
 REMINDER_TZ=Australia/Lord_Howe schedule "2026-10-03 13:00" "tomorrow 2:15am"
 assert_timer "--on-calendar=2026-10-03 15:45:00 UTC" "reminder cli moves a skipped time by a half-hour jump's length"
