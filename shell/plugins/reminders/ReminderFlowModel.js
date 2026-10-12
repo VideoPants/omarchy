@@ -1,3 +1,7 @@
+var TOMORROW_PATTERN = /^(?:tomorrow|tmrw?)\s+|\s+(?:tomorrow|tmrw?)$/
+var MS_PER_MINUTE = 60000
+var MS_PER_DAY = 86400000
+
 function validMinutes(value) {
   var minutes = String(value || "").trim()
   return /^[0-9]+$/.test(minutes) && Number(minutes) > 0 ? minutes : ""
@@ -10,31 +14,33 @@ function parseDuration(text) {
   var match = /^(?:in\s+)?(?:(\d+)\s*h(?:ours?|rs?)?)?\s*(?:(\d+)\s*m(?:in(?:ute)?s?)?)?$/.exec(text)
   if (!match || (match[1] === undefined && match[2] === undefined)) return 0
 
-  var minutes = Number(match[1] || 0) * 60 + Number(match[2] || 0)
-  return minutes > 0 ? minutes : 0
+  return Number(match[1] || 0) * 60 + Number(match[2] || 0)
+}
+
+function parse12HourClock(text) {
+  var match = /^(\d{1,2})(?:[:.](\d{2}))?\s*([ap])\.?\s*(?:m\.?)?$/.exec(text)
+  if (!match) return null
+
+  var hour = Number(match[1])
+  var minute = Number(match[2] || 0)
+  if (hour < 1 || hour > 12 || minute > 59) return null
+  return { hour: (hour % 12) + (match[3] === "p" ? 12 : 0), minute: minute }
+}
+
+function parse24HourClock(text) {
+  var match = /^(\d{1,2}):(\d{2})$/.exec(text)
+  if (!match) return null
+
+  var hour = Number(match[1])
+  var minute = Number(match[2])
+  if (hour > 23 || minute > 59) return null
+  return { hour: hour, minute: minute }
 }
 
 function parseClock(text) {
   if (text === "noon") return { hour: 12, minute: 0 }
   if (text === "midnight") return { hour: 0, minute: 0 }
-
-  var match = /^(\d{1,2})(?:[:.](\d{2}))?\s*([ap])\.?\s*(?:m\.?)?$/.exec(text)
-  if (match) {
-    var hour12 = Number(match[1])
-    var minute12 = Number(match[2] || 0)
-    if (hour12 < 1 || hour12 > 12 || minute12 > 59) return null
-    return { hour: (hour12 % 12) + (match[3] === "p" ? 12 : 0), minute: minute12 }
-  }
-
-  match = /^(\d{1,2}):(\d{2})$/.exec(text)
-  if (match) {
-    var hour24 = Number(match[1])
-    var minute24 = Number(match[2])
-    if (hour24 > 23 || minute24 > 59) return null
-    return { hour: hour24, minute: minute24 }
-  }
-
-  return null
+  return parse12HourClock(text) || parse24HourClock(text)
 }
 
 // Returns { kind: "duration", minutes } or { kind: "time", hour, minute, tomorrow }, or null.
@@ -45,34 +51,40 @@ function parseWhen(value) {
   var minutes = parseDuration(text)
   if (minutes) return { kind: "duration", minutes: minutes }
 
-  var tomorrow = false
-  var stripped = text.replace(/^(?:tomorrow|tmrw?)\s+/, function() { tomorrow = true; return "" })
-  stripped = stripped.replace(/\s+(?:tomorrow|tmrw?)$/, function() { tomorrow = true; return "" })
-  stripped = stripped.replace(/^at\s+/, "")
-
-  var clock = parseClock(stripped)
+  var clock = parseClock(text.replace(TOMORROW_PATTERN, "").replace(/^at\s+/, ""))
   if (!clock) return null
-  return { kind: "time", hour: clock.hour, minute: clock.minute, tomorrow: tomorrow }
+  return { kind: "time", hour: clock.hour, minute: clock.minute, tomorrow: TOMORROW_PATTERN.test(text) }
+}
+
+// Built from the calendar day so a daylight-saving shift on one day never
+// carries into another.
+function clockOnDay(now, daysAhead, when) {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysAhead, when.hour, when.minute, 0, 0)
 }
 
 function resolveDate(when, now) {
   now = now || new Date()
   if (!when) return null
+  if (when.kind === "duration") return new Date(now.getTime() + when.minutes * MS_PER_MINUTE)
+  if (when.tomorrow) return clockOnDay(now, 1, when)
 
-  if (when.kind === "duration") return new Date(now.getTime() + when.minutes * 60000)
+  var today = clockOnDay(now, 0, when)
+  return today.getTime() > now.getTime() ? today : clockOnDay(now, 1, when)
+}
 
-  // Build each candidate from its calendar day so a daylight-saving shift on one
-  // day is never carried into the other.
-  var target = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (when.tomorrow ? 1 : 0), when.hour, when.minute, 0, 0)
-  if (!when.tomorrow && target.getTime() <= now.getTime())
-    target = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, when.hour, when.minute, 0, 0)
-  return target
+function calendarDaysBetween(from, to) {
+  var fromDay = new Date(from.getFullYear(), from.getMonth(), from.getDate())
+  var toDay = new Date(to.getFullYear(), to.getMonth(), to.getDate())
+  return Math.round((toDay - fromDay) / MS_PER_DAY)
+}
+
+function pad(value) {
+  return (value < 10 ? "0" : "") + value
 }
 
 function formatClock(date) {
   var hour = date.getHours() % 12 || 12
-  var minute = date.getMinutes()
-  return hour + ":" + (minute < 10 ? "0" : "") + minute + " " + (date.getHours() < 12 ? "AM" : "PM")
+  return hour + ":" + pad(date.getMinutes()) + " " + (date.getHours() < 12 ? "AM" : "PM")
 }
 
 function formatDuration(minutes) {
@@ -84,8 +96,7 @@ function formatDuration(minutes) {
 }
 
 function dayLabel(target, now) {
-  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  var days = Math.round((new Date(target.getFullYear(), target.getMonth(), target.getDate()) - today) / 86400000)
+  var days = calendarDaysBetween(now, target)
   if (days === 0) return "today"
   if (days === 1) return "tomorrow"
   return target.toDateString()
@@ -99,7 +110,7 @@ function describe(when, now) {
   if (when.kind === "duration")
     return "In " + formatDuration(when.minutes) + " · at " + formatClock(target)
 
-  var minutesAway = Math.max(1, Math.ceil((target.getTime() - now.getTime()) / 60000))
+  var minutesAway = Math.max(1, Math.ceil((target.getTime() - now.getTime()) / MS_PER_MINUTE))
   return formatClock(target) + " " + dayLabel(target, now) + " · in " + formatDuration(minutesAway)
 }
 
@@ -115,21 +126,16 @@ function reminderArgs(minutes, message) {
   return withMessage([valid], message)
 }
 
-function pad(value) {
-  return (value < 10 ? "0" : "") + value
-}
-
-// omarchy-reminder args for `when`: minutes for durations, the requested
-// "HH:MM" or "tomorrow HH:MM" for clock times, leaving the CLI to resolve the
-// wall-clock time on that day.
+// Clock times pass the requested "HH:MM" (prefixed with "tomorrow" when it
+// falls tomorrow) so omarchy-reminder resolves the wall-clock time on that day.
 function scheduleArgs(when, message, now) {
   now = now || new Date()
   if (!when) return []
   if (when.kind === "duration") return reminderArgs(when.minutes, message)
 
-  var target = resolveDate(when, now)
   var clock = pad(when.hour) + ":" + pad(when.minute)
-  return withMessage([dayLabel(target, now) === "tomorrow" ? "tomorrow " + clock : clock], message)
+  var isTomorrow = calendarDaysBetween(now, resolveDate(when, now)) === 1
+  return withMessage([isTomorrow ? "tomorrow " + clock : clock], message)
 }
 
 if (typeof module !== "undefined") {

@@ -20,42 +20,17 @@ format_remaining() {
   fi
 }
 
-next_day() {
-  date -d "$1 12:00 tomorrow" +%F
-}
+# Normalize a clock time like 3pm, 3:30 p.m., 15:30, noon, or "tomorrow at 9am"
+# to "HH:MM" or "tomorrow HH:MM". Fails for anything else, so GNU date never
+# gets to read input like "1h" as a timezone.
+normalize_clock_time() {
+  local words when prefix=""
 
-# Epoch for a wall-clock HH:MM on a calendar day, resolving daylight-saving
-# edges the way JavaScript dates do so the scheduled time matches the prompt's
-# preview: a time skipped by a jump is read at the offset in force before it,
-# and a time repeated by a fall back takes its first occurrence. GNU date
-# picks either occurrence depending on the zone.
-local_time_epoch() {
-  local day=$1 clock=$2 offset_before before epoch
-
-  offset_before=$(date -d "@$(($(TZ=UTC date -d "$day $clock" +%s) - 86400))" +%z)
-  before=$(date -d "$day $clock $offset_before" +%s 2>/dev/null) || return 1
-
-  if ! epoch=$(date -d "$day $clock" +%s 2>/dev/null); then
-    echo "$before"
-  elif [[ $(date -d "@$before" '+%F %H:%M') == "$day $clock" ]] && ((before < epoch)); then
-    echo "$before"
-  else
-    echo "$epoch"
-  fi
-}
-
-# Resolve a clock time like 3pm, 3:30 pm, 15:30, noon, or "tomorrow 9am" to an
-# epoch, rolling over to tomorrow when the time has already passed at <now>.
-# Days are picked as calendar dates so the wall-clock time holds across
-# daylight-saving changes.
-clock_time_epoch() {
-  local now=$1 words when tomorrow=0 clock day target
-
-  read -r -a words <<<"${2,,}"
+  read -r -a words <<<"${1,,}"
   when="${words[*]}"
 
   if [[ $when =~ ^tomorrow\ (.+)$ ]] || [[ $when =~ ^(.+)\ tomorrow$ ]]; then
-    tomorrow=1
+    prefix="tomorrow "
     when=${BASH_REMATCH[1]}
   fi
   when=${when#at }
@@ -71,19 +46,56 @@ clock_time_epoch() {
     return 1
   fi
 
-  clock=$(TZ=UTC date -d "2000-01-01 $when" +%H:%M 2>/dev/null) || return 1
+  when=$(TZ=UTC date -d "2000-01-01 $when" +%H:%M 2>/dev/null) || return 1
+  echo "$prefix$when"
+}
 
+next_day() {
+  date -d "$1 12:00 tomorrow" +%F
+}
+
+# UTC offset a day before <day> <HH:MM>, i.e. before any daylight-saving change on that day.
+offset_before_day() {
+  date -d "@$(($(TZ=UTC date -d "$1 $2" +%s) - 86400))" +%z
+}
+
+# Epoch for a wall-clock HH:MM on a calendar day, resolving daylight-saving
+# edges the way JavaScript dates do so the timer matches the prompt's preview:
+# a skipped time is read at the offset in force before the jump, and a
+# repeated time takes its first occurrence (GNU date picks either, by zone).
+local_time_epoch() {
+  local day=$1 clock=$2 at_earlier_offset as_parsed
+
+  at_earlier_offset=$(date -d "$day $clock $(offset_before_day "$day" "$clock")" +%s 2>/dev/null) || return 1
+
+  if ! as_parsed=$(date -d "$day $clock" +%s 2>/dev/null); then
+    echo "$at_earlier_offset"
+  elif ((at_earlier_offset < as_parsed)) && [[ $(date -d "@$at_earlier_offset" '+%F %H:%M') == "$day $clock" ]]; then
+    echo "$at_earlier_offset"
+  else
+    echo "$as_parsed"
+  fi
+}
+
+# Epoch for a clock time at or after <now>, rolling a time that has already
+# passed today over to tomorrow.
+clock_time_epoch() {
+  local now=$1 clock day target
+
+  clock=$(normalize_clock_time "$2") || return 1
   day=$(date -d "@$now" +%F)
-  if ((tomorrow)); then
-    day=$(next_day "$day")
+
+  if [[ $clock == tomorrow\ * ]]; then
+    local_time_epoch "$(next_day "$day")" "${clock#tomorrow }"
+    return
   fi
 
   target=$(local_time_epoch "$day" "$clock") || return 1
-  if ((!tomorrow && target <= now)); then
-    target=$(local_time_epoch "$(next_day "$day")" "$clock") || return 1
+  if ((target <= now)); then
+    local_time_epoch "$(next_day "$day")" "$clock"
+  else
+    echo "$target"
   fi
-
-  echo "$target"
 }
 
 active_reminder_timers() {
@@ -247,15 +259,15 @@ if [[ $when =~ ^[0-9]+$ ]] && ((10#$when > 0)); then
 elif [[ -n $when ]] && target=$(clock_time_epoch "$set_at" "$when"); then
   minutes=$(((target - set_at + 59) / 60))
   timer_spec="--on-calendar=$(TZ=UTC date -d "@$target" '+%F %T UTC')"
-  remind_at=$(date -d "@$target" '+%-I:%M %p')
+  remind_clock=$(date -d "@$target" '+%-I:%M %p')
   if [[ $(date -d "@$target" +%F) == $(date -d "@$set_at" +%F) ]]; then
-    confirmation="You'll be reminded today at $remind_at"
+    confirmation="You'll be reminded today at $remind_clock"
   else
-    confirmation="You'll be reminded tomorrow at $remind_at"
+    confirmation="You'll be reminded tomorrow at $remind_clock"
   fi
-  confirmation_title="Reminder set for $remind_at"
-  default_message="It's $remind_at"
-  scheduled="at $remind_at"
+  confirmation_title="Reminder set for $remind_clock"
+  default_message="It's $remind_clock"
+  scheduled="at $remind_clock"
 else
   usage
   exit 1
