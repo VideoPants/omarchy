@@ -1,5 +1,3 @@
-var MINUTES_PER_DAY = 24 * 60
-
 function validMinutes(value) {
   var minutes = String(value || "").trim()
   return /^[0-9]+$/.test(minutes) && Number(minutes) > 0 ? minutes : ""
@@ -63,8 +61,11 @@ function resolveDate(when, now) {
 
   if (when.kind === "duration") return new Date(now.getTime() + when.minutes * 60000)
 
-  var target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), when.hour, when.minute, 0, 0)
-  if (when.tomorrow || target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1)
+  // Build each candidate from its calendar day so a daylight-saving shift on one
+  // day is never carried into the other.
+  var target = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (when.tomorrow ? 1 : 0), when.hour, when.minute, 0, 0)
+  if (!when.tomorrow && target.getTime() <= now.getTime())
+    target = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, when.hour, when.minute, 0, 0)
   return target
 }
 
@@ -99,7 +100,7 @@ function describe(when, now) {
     return "In " + formatDuration(when.minutes) + " · at " + formatClock(target)
 
   var minutesAway = Math.max(1, Math.ceil((target.getTime() - now.getTime()) / 60000))
-  return formatClock(target) + " " + dayLabel(target, now) + " · in " + formatDuration(Math.min(minutesAway, MINUTES_PER_DAY))
+  return formatClock(target) + " " + dayLabel(target, now) + " · in " + formatDuration(minutesAway)
 }
 
 function withMessage(args, message) {
@@ -118,15 +119,16 @@ function pad(value) {
   return (value < 10 ? "0" : "") + value
 }
 
-// omarchy-reminder args for `when`: minutes for durations, "HH:MM" or
-// "tomorrow HH:MM" for clock times.
+// omarchy-reminder args for `when`: minutes for durations, the requested
+// "HH:MM" or "tomorrow HH:MM" for clock times, leaving the CLI to resolve the
+// wall-clock time on that day.
 function scheduleArgs(when, message, now) {
   now = now || new Date()
   if (!when) return []
   if (when.kind === "duration") return reminderArgs(when.minutes, message)
 
   var target = resolveDate(when, now)
-  var clock = pad(target.getHours()) + ":" + pad(target.getMinutes())
+  var clock = pad(when.hour) + ":" + pad(when.minute)
   return withMessage([dayLabel(target, now) === "tomorrow" ? "tomorrow " + clock : clock], message)
 }
 

@@ -20,16 +20,31 @@ format_remaining() {
   fi
 }
 
-# Resolve a clock time like 3pm, 3:30 pm, 15:30, noon, or "tomorrow 9am" to an
-# epoch, rolling over to tomorrow when the time has already passed today.
-clock_time_epoch() {
-  local words when day="" target
+next_day() {
+  date -d "$1 12:00 tomorrow" +%F
+}
 
-  read -r -a words <<<"${1,,}"
+# Epoch for a wall-clock HH:MM on a calendar day. A time skipped by a
+# daylight-saving jump resolves to the same time an hour later.
+local_time_epoch() {
+  local day=$1 clock=$2
+  local hour=$((10#${clock%%:*})) minute=${clock#*:}
+
+  date -d "$day $clock" +%s 2>/dev/null || date -d "$day $((hour + 1)):$minute" +%s 2>/dev/null
+}
+
+# Resolve a clock time like 3pm, 3:30 pm, 15:30, noon, or "tomorrow 9am" to an
+# epoch, rolling over to tomorrow when the time has already passed at <now>.
+# Days are picked as calendar dates so the wall-clock time holds across
+# daylight-saving changes.
+clock_time_epoch() {
+  local now=$1 words when tomorrow=0 clock day target
+
+  read -r -a words <<<"${2,,}"
   when="${words[*]}"
 
   if [[ $when =~ ^tomorrow\ (.+)$ ]] || [[ $when =~ ^(.+)\ tomorrow$ ]]; then
-    day="tomorrow "
+    tomorrow=1
     when=${BASH_REMATCH[1]}
   fi
   when=${when#at }
@@ -39,13 +54,22 @@ clock_time_epoch() {
   midnight) when="00:00" ;;
   esac
 
-  if [[ ! $when =~ ^[0-9]{1,2}(:[0-9]{2})?\ ?[ap]\.?m?\.?$ ]] && [[ ! $when =~ ^[0-9]{1,2}:[0-9]{2}$ ]]; then
+  if [[ $when =~ ^([0-9]{1,2}(:[0-9]{2})?)\ ?([ap])\.?m?\.?$ ]]; then
+    when="${BASH_REMATCH[1]} ${BASH_REMATCH[3]}m"
+  elif [[ ! $when =~ ^[0-9]{1,2}:[0-9]{2}$ ]]; then
     return 1
   fi
 
-  target=$(date -d "$day$when" +%s 2>/dev/null) || return 1
-  if [[ -z $day ]] && ((target <= $(date +%s))); then
-    target=$(date -d "tomorrow $when" +%s)
+  clock=$(TZ=UTC date -d "2000-01-01 $when" +%H:%M 2>/dev/null) || return 1
+
+  day=$(date -d "@$now" +%F)
+  if ((tomorrow)); then
+    day=$(next_day "$day")
+  fi
+
+  target=$(local_time_epoch "$day" "$clock") || return 1
+  if ((!tomorrow && target <= now)); then
+    target=$(local_time_epoch "$(next_day "$day")" "$clock") || return 1
   fi
 
   echo "$target"
@@ -205,15 +229,15 @@ set_at=$(date +%s)
 if [[ $when =~ ^[0-9]+$ ]] && ((10#$when > 0)); then
   minutes=$((10#$when))
   timer_spec="--on-active=${minutes}m"
-  confirmation="You'll be reminded at $(date -d "+${minutes} minutes" +%H:%M)"
+  confirmation="You'll be reminded at $(date -d "@$((set_at + minutes * 60))" +%H:%M)"
   confirmation_title="Reminder set for ${minutes} minutes"
   default_message="Your ${minutes} minutes are up"
   scheduled="in ${minutes} minutes"
-elif [[ -n $when ]] && target=$(clock_time_epoch "$when"); then
+elif [[ -n $when ]] && target=$(clock_time_epoch "$set_at" "$when"); then
   minutes=$(((target - set_at + 59) / 60))
-  timer_spec="--on-calendar=$(date -d "@$target" '+%F %T')"
+  timer_spec="--on-calendar=$(TZ=UTC date -d "@$target" '+%F %T UTC')"
   remind_at=$(date -d "@$target" '+%-I:%M %p')
-  if [[ $(date -d "@$target" +%F) == $(date +%F) ]]; then
+  if [[ $(date -d "@$target" +%F) == $(date -d "@$set_at" +%F) ]]; then
     confirmation="You'll be reminded today at $remind_at"
   else
     confirmation="You'll be reminded tomorrow at $remind_at"

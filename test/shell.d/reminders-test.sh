@@ -52,4 +52,110 @@ assertEqual(reminders.describe(reminders.parseWhen('9am'), now), '9:00 AM tomorr
 assertDeepEqual(reminders.scheduleArgs(reminders.parseWhen('1h'), 'Stretch', now), ['60', 'Stretch'], 'reminders schedules durations in minutes')
 assertDeepEqual(reminders.scheduleArgs(reminders.parseWhen('3:30pm'), '', now), ['15:30'], 'reminders schedules clock times for today')
 assertDeepEqual(reminders.scheduleArgs(reminders.parseWhen('9am'), 'Call mom', now), ['tomorrow 09:00', 'Call mom'], 'reminders schedules passed times for tomorrow')
+assertEqual(reminders.describe(reminders.parseWhen('tomorrow 9am'), new Date(2026, 9, 12, 1, 0)), '9:00 AM tomorrow · in 32h', 'reminders previews the full wait for tomorrow times')
 JS
+
+TZ=America/New_York run_node_test <<'JS'
+const reminders = requireFromRoot('shell/plugins/reminders/ReminderFlowModel.js')
+
+const beforeSpringForward = new Date(2026, 2, 7, 13, 0)
+const beforeFallBack = new Date(2026, 9, 31, 13, 0)
+const springTomorrow = reminders.resolveDate(reminders.parseWhen('tomorrow 9am'), beforeSpringForward)
+const fallTomorrow = reminders.resolveDate(reminders.parseWhen('tomorrow 9am'), beforeFallBack)
+
+assertEqual(`${springTomorrow.getDate()} ${springTomorrow.getHours()}:${springTomorrow.getMinutes()}`, '8 9:0', 'reminders keep tomorrow at the requested hour across spring forward')
+assertEqual(`${fallTomorrow.getDate()} ${fallTomorrow.getHours()}:${fallTomorrow.getMinutes()}`, '1 9:0', 'reminders keep tomorrow at the requested hour across fall back')
+assertDeepEqual(
+  reminders.scheduleArgs(reminders.parseWhen('tomorrow 2:30am'), '', beforeSpringForward),
+  ['tomorrow 02:30'],
+  'reminders pass the requested time when today skips that hour'
+)
+JS
+
+tmp_dir=$(mktemp -d)
+trap 'rm -rf "$tmp_dir"' EXIT
+
+real_date=$(command -v date)
+mkdir -p "$tmp_dir/bin" "$tmp_dir/runtime"
+
+cat >"$tmp_dir/bin/date" <<STUB
+#!/bin/bash
+
+for arg in "\$@"; do
+  if [[ \$arg == -d* ]]; then
+    exec "$real_date" "\$@"
+  fi
+done
+
+exec "$real_date" -d "@\$FAKE_NOW" "\$@"
+STUB
+
+cat >"$tmp_dir/bin/systemd-run" <<STUB
+#!/bin/bash
+
+printf '%s\n' "\$@" >"$tmp_dir/systemd-run.args"
+STUB
+
+cat >"$tmp_dir/bin/omarchy-notification-send" <<STUB
+#!/bin/bash
+
+printf '%s\n' "\$@" >"$tmp_dir/notification.args"
+STUB
+
+printf '#!/bin/bash\n' >"$tmp_dir/bin/omarchy-shell"
+chmod +x "$tmp_dir/bin/"*
+
+# schedule <local now> <omarchy-reminder args...>, in New York time.
+schedule() {
+  local now=$1
+  shift
+
+  rm -f "$tmp_dir/systemd-run.args" "$tmp_dir/notification.args"
+  FAKE_NOW=$(TZ=America/New_York "$real_date" -d "$now" +%s) TZ=America/New_York \
+    XDG_RUNTIME_DIR="$tmp_dir/runtime" PATH="$tmp_dir/bin:$PATH" "$ROOT/bin/omarchy-reminder" "$@" >/dev/null
+}
+
+assert_timer() {
+  local expected=$1 description=$2
+
+  grep -Fx -- "$expected" "$tmp_dir/systemd-run.args" >/dev/null ||
+    fail "$description" "expected $expected in: $(cat "$tmp_dir/systemd-run.args" 2>/dev/null)"
+  pass "$description"
+}
+
+schedule "2026-10-12 13:41" 15 "Stretch"
+assert_timer "--on-active=15m" "reminder cli keeps minutes as a countdown"
+
+schedule "2026-10-12 13:41" 3:30pm
+assert_timer "--on-calendar=2026-10-12 19:30:00 UTC" "reminder cli schedules a time later today"
+assert_timer "--unit=omarchy-reminder-109m-$(TZ=America/New_York "$real_date" -d "2026-10-12 13:41" +%s)" "reminder cli names clock timers by minutes away"
+grep -Fx "You'll be reminded today at 3:30 PM" "$tmp_dir/notification.args" >/dev/null || fail "reminder cli confirms the clock time"
+pass "reminder cli confirms the clock time"
+
+schedule "2026-10-12 13:41" 3p
+assert_timer "--on-calendar=2026-10-12 19:00:00 UTC" "reminder cli reads a bare p as pm"
+
+schedule "2026-10-12 13:41" 9am
+assert_timer "--on-calendar=2026-10-13 13:00:00 UTC" "reminder cli rolls a passed time over to tomorrow"
+
+schedule "2026-03-07 13:00" "tomorrow 9am"
+assert_timer "--on-calendar=2026-03-08 13:00:00 UTC" "reminder cli keeps tomorrow's time across spring forward"
+
+schedule "2026-10-31 13:00" "9am tomorrow"
+assert_timer "--on-calendar=2026-11-01 14:00:00 UTC" "reminder cli keeps tomorrow's time across fall back"
+
+schedule "2026-03-08 04:00" 2:30am
+assert_timer "--on-calendar=2026-03-09 06:30:00 UTC" "reminder cli rolls over a time skipped today"
+
+schedule "2026-03-07 13:00" "tomorrow 2:30am"
+assert_timer "--on-calendar=2026-03-08 07:30:00 UTC" "reminder cli moves a skipped time past the jump"
+
+schedule "2026-11-01 00:30" 1:30am
+assert_timer "--on-calendar=2026-11-01 05:30:00 UTC" "reminder cli picks the first of a repeated time"
+
+for input in 1h 13pm 25:00 soon 0; do
+  if schedule "2026-10-12 13:41" "$input" 2>/dev/null || [[ -e $tmp_dir/systemd-run.args ]]; then
+    fail "reminder cli rejects $input"
+  fi
+done
+pass "reminder cli rejects input that is not minutes or a clock time"
