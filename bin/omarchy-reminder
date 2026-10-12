@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # omarchy:summary=Set and show lightweight desktop notification reminders
-# omarchy:args=[-i|--interactive] | <minutes> [message] | show [-j|--json] | clear
-# omarchy:examples=omarchy reminder -i | omarchy reminder 5 | omarchy reminder 30 "Check the oven" | omarchy reminder show | omarchy reminder show --json | omarchy reminder clear
+# omarchy:args=[-i|--interactive] | <minutes|time> [message] | show [-j|--json] | clear
+# omarchy:examples=omarchy reminder -i | omarchy reminder 5 | omarchy reminder 30 "Check the oven" | omarchy reminder 3:30pm "Call mom" | omarchy reminder "tomorrow 9am" | omarchy reminder show | omarchy reminder show --json | omarchy reminder clear
 
 set -euo pipefail
 
@@ -18,6 +18,37 @@ format_remaining() {
   else
     echo "${remainder}s"
   fi
+}
+
+# Resolve a clock time like 3pm, 3:30 pm, 15:30, noon, or "tomorrow 9am" to an
+# epoch, rolling over to tomorrow when the time has already passed today.
+clock_time_epoch() {
+  local words when day="" target
+
+  read -r -a words <<<"${1,,}"
+  when="${words[*]}"
+
+  if [[ $when =~ ^tomorrow\ (.+)$ ]] || [[ $when =~ ^(.+)\ tomorrow$ ]]; then
+    day="tomorrow "
+    when=${BASH_REMATCH[1]}
+  fi
+  when=${when#at }
+
+  case $when in
+  noon) when="12:00" ;;
+  midnight) when="00:00" ;;
+  esac
+
+  if [[ ! $when =~ ^[0-9]{1,2}(:[0-9]{2})?\ ?[ap]\.?m?\.?$ ]] && [[ ! $when =~ ^[0-9]{1,2}:[0-9]{2}$ ]]; then
+    return 1
+  fi
+
+  target=$(date -d "$day$when" +%s 2>/dev/null) || return 1
+  if [[ -z $day ]] && ((target <= $(date +%s))); then
+    target=$(date -d "tomorrow $when" +%s)
+  fi
+
+  echo "$target"
 }
 
 active_reminder_timers() {
@@ -134,7 +165,7 @@ clear_reminders() {
 
 usage() {
   echo "Usage: omarchy-reminder [-i|--interactive]"
-  echo "       omarchy-reminder <minutes> [message]"
+  echo "       omarchy-reminder <minutes|time> [message]"
   echo "       omarchy-reminder show [-j|--json]"
   echo "       omarchy-reminder clear"
 }
@@ -165,36 +196,52 @@ clear)
   ;;
 esac
 
-minutes=${1:-}
+when=${1:-}
 shift || true
 message="$*"
 custom_message="$message"
+set_at=$(date +%s)
 
-if [[ -z $minutes ]] || [[ ! $minutes =~ ^[0-9]+$ ]] || ((minutes == 0)); then
+if [[ $when =~ ^[0-9]+$ ]] && ((10#$when > 0)); then
+  minutes=$((10#$when))
+  timer_spec="--on-active=${minutes}m"
+  confirmation="You'll be reminded at $(date -d "+${minutes} minutes" +%H:%M)"
+  confirmation_title="Reminder set for ${minutes} minutes"
+  default_message="Your ${minutes} minutes are up"
+  scheduled="in ${minutes} minutes"
+elif [[ -n $when ]] && target=$(clock_time_epoch "$when"); then
+  minutes=$(((target - set_at + 59) / 60))
+  timer_spec="--on-calendar=$(date -d "@$target" '+%F %T')"
+  remind_at=$(date -d "@$target" '+%-I:%M %p')
+  if [[ $(date -d "@$target" +%F) == $(date +%F) ]]; then
+    confirmation="You'll be reminded today at $remind_at"
+  else
+    confirmation="You'll be reminded tomorrow at $remind_at"
+  fi
+  confirmation_title="Reminder set for $remind_at"
+  default_message="It's $remind_at"
+  scheduled="at $remind_at"
+else
   usage
   exit 1
 fi
 
 if [[ -z $message ]]; then
-  message="Your ${minutes} minutes are up"
+  message=$default_message
 fi
 
-set_at=$(date +%s)
-remind_at=$(date -d "+${minutes} minutes" +%H:%M)
 unit="omarchy-reminder-${minutes}m-$set_at"
 reminder_dir="${XDG_RUNTIME_DIR:-/tmp}/omarchy-reminders"
 message_file="$reminder_dir/$unit.message"
-confirmation="You'll be reminded at $remind_at"
-confirmation_title="Reminder set for ${minutes} minutes"
 
 mkdir -p "$reminder_dir"
 
 if [[ -n $custom_message ]]; then
   printf "%s" "$custom_message" >"$message_file"
-  confirmation_title="$custom_message in ${minutes} minutes"
+  confirmation_title="$custom_message $scheduled"
 fi
 
-systemd-run --user --quiet --collect --on-active="${minutes}m" --unit="$unit" \
+systemd-run --user --quiet --collect "$timer_spec" --unit="$unit" \
   bash -c 'omarchy-notification-send -g 󰢌 "Reminder" "$1"; rm -f "$2"; omarchy-shell -q omarchy.indicators refresh >/dev/null 2>&1 || true' bash "$message" "$message_file"
 
 refresh_indicator
