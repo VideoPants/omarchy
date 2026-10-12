@@ -25,12 +25,15 @@ next_day() {
 }
 
 # Epoch for a wall-clock HH:MM on a calendar day. A time skipped by a
-# daylight-saving jump resolves to the same time an hour later.
+# daylight-saving jump is read at the offset in force before the jump, landing
+# past it by the jump's actual length, as JavaScript dates do.
 local_time_epoch() {
-  local day=$1 clock=$2
-  local hour=$((10#${clock%%:*})) minute=${clock#*:}
+  local day=$1 clock=$2 offset_before
 
-  date -d "$day $clock" +%s 2>/dev/null || date -d "$day $((hour + 1)):$minute" +%s 2>/dev/null
+  if ! date -d "$day $clock" +%s 2>/dev/null; then
+    offset_before=$(date -d "@$(($(TZ=UTC date -d "$day $clock" +%s) - 86400))" +%z)
+    date -d "$day $clock $offset_before" +%s 2>/dev/null
+  fi
 }
 
 # Resolve a clock time like 3pm, 3:30 pm, 15:30, noon, or "tomorrow 9am" to an

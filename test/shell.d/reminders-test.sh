@@ -72,6 +72,16 @@ assertDeepEqual(
 )
 JS
 
+TZ=Australia/Lord_Howe run_node_test <<'JS'
+const reminders = requireFromRoot('shell/plugins/reminders/ReminderFlowModel.js')
+
+assertEqual(
+  reminders.describe(reminders.parseWhen('tomorrow 2:15am'), new Date(2026, 9, 3, 13, 0)),
+  '2:45 AM tomorrow · in 13h 15m',
+  'reminders preview a skipped time past a half-hour jump'
+)
+JS
+
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -105,13 +115,13 @@ STUB
 printf '#!/bin/bash\n' >"$tmp_dir/bin/omarchy-shell"
 chmod +x "$tmp_dir/bin/"*
 
-# schedule <local now> <omarchy-reminder args...>, in New York time.
+# schedule <local now> <omarchy-reminder args...>, in $REMINDER_TZ (New York by default).
 schedule() {
-  local now=$1
+  local now=$1 tz=${REMINDER_TZ:-America/New_York}
   shift
 
   rm -f "$tmp_dir/systemd-run.args" "$tmp_dir/notification.args"
-  FAKE_NOW=$(TZ=America/New_York "$real_date" -d "$now" +%s) TZ=America/New_York \
+  FAKE_NOW=$(TZ=$tz "$real_date" -d "$now" +%s) TZ=$tz \
     XDG_RUNTIME_DIR="$tmp_dir/runtime" PATH="$tmp_dir/bin:$PATH" "$ROOT/bin/omarchy-reminder" "$@" >/dev/null
 }
 
@@ -152,6 +162,9 @@ assert_timer "--on-calendar=2026-03-08 07:30:00 UTC" "reminder cli moves a skipp
 
 schedule "2026-11-01 00:30" 1:30am
 assert_timer "--on-calendar=2026-11-01 05:30:00 UTC" "reminder cli picks the first of a repeated time"
+
+REMINDER_TZ=Australia/Lord_Howe schedule "2026-10-03 13:00" "tomorrow 2:15am"
+assert_timer "--on-calendar=2026-10-03 15:45:00 UTC" "reminder cli moves a skipped time by a half-hour jump's length"
 
 for input in 1h 13pm 25:00 soon 0; do
   if schedule "2026-10-12 13:41" "$input" 2>/dev/null || [[ -e $tmp_dir/systemd-run.args ]]; then
