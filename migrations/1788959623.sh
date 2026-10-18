@@ -5,7 +5,7 @@ echo "Mark Omarchy web app launchers so default-browser apps stay in the web app
 # New installs (including default-browser ones) get X-Omarchy-WebApp from
 # omarchy-webapp-install going forward.
 apps_dir="$HOME/.local/share/applications"
-[[ -d $apps_dir ]] || return 0
+[[ -d $apps_dir ]] || exit 0
 
 shopt -s nullglob
 for file in "$apps_dir"/*.desktop; do

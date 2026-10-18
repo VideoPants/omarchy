@@ -190,3 +190,29 @@ fi
 [[ ! -e $browser_desktop ]] ||
   fail "webapp remove deletes a default-browser web app"
 pass "webapp remove finds default-browser launchers via X-Omarchy-WebApp"
+
+# Canceling the browser-choice prompt must not write a launcher.
+cat >"$stubs/gum" <<'GUM'
+#!/bin/bash
+count=$(cat "$GUM_COUNT" 2>/dev/null || echo 0)
+count=$((count + 1))
+printf '%s\n' "$count" >"$GUM_COUNT"
+# Name + URL succeed; the browser choose is the third gum call.
+if (( count >= 3 )); then
+  exit 130
+fi
+sed -n "${count}p" "$GUM_ANSWERS"
+GUM
+chmod +x "$stubs/gum"
+
+printf 'CancelMe\nhttps://example.com/\n' >"$tmpdir/answers"
+: >"$tmpdir/gum-count"
+
+if GUM_ANSWERS="$tmpdir/answers" GUM_COUNT="$tmpdir/gum-count" \
+  PATH="$stubs:$PATH" HOME="$home" "$ROOT/bin/omarchy-webapp-install" \
+  >"$tmpdir/out" 2>"$tmpdir/err"; then
+  fail "interactive webapp install aborts when browser choice is cancelled"
+fi
+[[ ! -e $(desktop_for CancelMe) ]] ||
+  fail "cancelling browser choice writes no desktop file" "$(cat "$(desktop_for CancelMe)")"
+pass "interactive webapp install aborts when browser choice is cancelled"
