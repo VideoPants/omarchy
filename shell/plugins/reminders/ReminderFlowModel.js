@@ -92,9 +92,23 @@ function pad(value) {
   return (value < 10 ? "0" : "") + value
 }
 
+// The bar clock's own default, which is a 24-hour format.
+var DEFAULT_CLOCK_FORMAT = "dddd HH:mm"
+
+// Reminder times follow the bar clock, so they read the way the time on screen
+// does. Only a 12-hour Qt pattern has an AM/PM designator (A or a) once quoted
+// literals are stripped; an unset format means the bar's 24-hour default.
+function usesTwentyFourHour(clockFormat) {
+  var pattern = String(clockFormat || DEFAULT_CLOCK_FORMAT).replace(/'[^']*'/g, "")
+  return !/[Aa]/.test(pattern)
+}
+
 // tr is an optional translate(key, english) from the QML side (I18n.t);
 // without it the English text stands, which is what the Node tests assert.
-function formatClock(date, tr) {
+// hour24 picks 15:30 over 3:30 PM.
+function formatClock(date, tr, hour24) {
+  if (hour24) return pad(date.getHours()) + ":" + pad(date.getMinutes())
+
   var t = translator(tr)
   var hour = date.getHours() % 12 || 12
   var meridiem = date.getHours() < 12
@@ -120,18 +134,18 @@ function dayLabel(target, now, tr) {
   return target.toDateString()
 }
 
-function describe(when, now, tr) {
+function describe(when, now, tr, hour24) {
   var t = translator(tr)
   now = now || new Date()
   var target = resolveDate(when, now)
   if (!target) return ""
 
   if (when.kind === "duration")
-    return fill(t("reminders.previewInAt", "In %1 · at %2"), [formatDuration(when.minutes, tr), formatClock(target, tr)])
+    return fill(t("reminders.previewInAt", "In %1 · at %2"), [formatDuration(when.minutes, tr), formatClock(target, tr, hour24)])
 
   var minutesAway = Math.max(1, Math.ceil((target.getTime() - now.getTime()) / MS_PER_MINUTE))
   return fill(t("reminders.previewAtIn", "%1 %2 · in %3"), [
-    formatClock(target, tr),
+    formatClock(target, tr, hour24),
     dayLabel(target, now, tr),
     formatDuration(minutesAway, tr)
   ])
@@ -168,6 +182,7 @@ if (typeof module !== "undefined") {
     parseWhen: parseWhen,
     resolveDate: resolveDate,
     describe: describe,
+    usesTwentyFourHour: usesTwentyFourHour,
     scheduleArgs: scheduleArgs
   }
 }

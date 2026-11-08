@@ -99,8 +99,24 @@ clock_time_epoch() {
   fi
 }
 
+# Reminder times follow the bar clock, so they read the way the time on screen
+# does: 24-hour unless its Qt format has an AM/PM designator (A or a) outside
+# quoted text. omarchy-bar fails when the clock has no format of its own, which
+# means the bar's 24-hour default.
+clock_uses_24_hour() {
+  local format
+
+  format=$(omarchy-bar get omarchy.clock format 2>/dev/null) || format="dddd HH:mm"
+  format=$(sed "s/'[^']*'//g" <<<"$format")
+  [[ ! $format =~ [Aa] ]]
+}
+
 local_clock() {
-  LC_TIME="$(omarchy-language locale)" date -d "@$1" '+%-I:%M %p'
+  if clock_uses_24_hour; then
+    date -d "@$1" +%H:%M
+  else
+    LC_TIME="$(omarchy-language locale)" date -d "@$1" '+%-I:%M %p'
+  fi
 }
 
 active_reminder_timers() {

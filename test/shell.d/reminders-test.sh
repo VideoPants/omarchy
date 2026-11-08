@@ -46,6 +46,14 @@ assertEqual(reminders.parseWhen('25:00'), null, 'reminders rejects invalid 24-ho
 assertEqual(reminders.parseWhen('soon'), null, 'reminders rejects unrecognized input')
 
 assertEqual(reminders.describe(reminders.parseWhen('1h30m'), now), 'In 1h 30m · at 3:11 PM', 'reminders previews durations')
+assertEqual(reminders.describe(reminders.parseWhen('3:30pm'), now, null, true), '15:30 today · in 1h 49m', 'reminders previews clock times in 24-hour time')
+assertEqual(reminders.describe(reminders.parseWhen('tomorrow 9am'), now, null, true), '09:00 tomorrow · in 19h 19m', 'reminders previews tomorrow in 24-hour time')
+assertEqual(reminders.describe(reminders.parseWhen('1h30m'), now, null, true), 'In 1h 30m · at 15:11', 'reminders previews durations in 24-hour time')
+assertEqual(reminders.usesTwentyFourHour(''), true, 'reminders follow the bar clock default, which is 24-hour')
+assertEqual(reminders.usesTwentyFourHour('dddd HH:mm'), true, 'reminders read HH:mm as 24-hour')
+assertEqual(reminders.usesTwentyFourHour('ddd d MMM h:mm AP'), false, 'reminders read an AP format as 12-hour')
+assertEqual(reminders.usesTwentyFourHour("'Wk' ww h:mm a"), false, 'reminders read a lowercase a as 12-hour')
+assertEqual(reminders.usesTwentyFourHour("d MMMM 'Day' HH:mm"), true, 'reminders ignore quoted text in the clock format')
 assertEqual(reminders.describe(reminders.parseWhen('3:30pm'), now), '3:30 PM today · in 1h 49m', 'reminders previews clock times')
 assertEqual(reminders.describe(reminders.parseWhen('9am'), now), '9:00 AM tomorrow · in 19h 19m', 'reminders rolls past times to tomorrow')
 
@@ -123,6 +131,14 @@ printf '%s\n' "\$@" >"$tmp_dir/notification.args"
 STUB
 
 printf '#!/bin/bash\n' >"$tmp_dir/bin/omarchy-shell"
+
+# The bar clock's format, from CLOCK_FORMAT; unset means the clock has none of its own.
+cat >"$tmp_dir/bin/omarchy-bar" <<'STUB'
+#!/bin/bash
+
+[[ -n $CLOCK_FORMAT ]] || exit 1
+printf '%s\n' "$CLOCK_FORMAT"
+STUB
 chmod +x "$tmp_dir/bin/"*
 
 # schedule <local now> <omarchy-reminder args...>, in $REMINDER_TZ (New York by default).
@@ -131,7 +147,7 @@ schedule() {
   shift
 
   rm -f "$tmp_dir/systemd-run.args" "$tmp_dir/notification.args"
-  FAKE_NOW=$(TZ=$tz "$real_date" -d "$now" +%s) TZ=$tz     OMARCHY_PATH="$ROOT" XDG_RUNTIME_DIR="$tmp_dir/runtime" PATH="$tmp_dir/bin:$ROOT/bin:$PATH"     "$ROOT/bin/omarchy-reminder" "$@" >/dev/null
+  CLOCK_FORMAT=${CLOCK_FORMAT-h:mm AP} FAKE_NOW=$(TZ=$tz "$real_date" -d "$now" +%s) TZ=$tz     OMARCHY_PATH="$ROOT" XDG_RUNTIME_DIR="$tmp_dir/runtime" PATH="$tmp_dir/bin:$ROOT/bin:$PATH"     "$ROOT/bin/omarchy-reminder" "$@" >/dev/null
 }
 
 assert_timer() {
@@ -150,6 +166,21 @@ assert_timer "--on-calendar=2026-10-12 19:30:00 UTC" "reminder cli schedules a t
 assert_timer "--unit=omarchy-reminder-109m-$(TZ=America/New_York "$real_date" -d "2026-10-12 13:41" +%s)" "reminder cli names clock timers by minutes away"
 grep -Fx "You'll be reminded today at 3:30 PM" "$tmp_dir/notification.args" >/dev/null || fail "reminder cli confirms the clock time"
 pass "reminder cli confirms the clock time"
+
+CLOCK_FORMAT="dddd HH:mm" schedule "2026-10-12 13:41" 3:30pm
+grep -Fx "You'll be reminded today at 15:30" "$tmp_dir/notification.args" >/dev/null ||
+  fail "reminder cli confirms in 24-hour time when the bar clock is 24-hour" "$(cat "$tmp_dir/notification.args")"
+pass "reminder cli confirms in 24-hour time when the bar clock is 24-hour"
+
+CLOCK_FORMAT="" schedule "2026-10-12 13:41" 9am
+grep -Fx "You'll be reminded tomorrow at 09:00" "$tmp_dir/notification.args" >/dev/null ||
+  fail "reminder cli uses 24-hour time when the bar clock has the default format" "$(cat "$tmp_dir/notification.args")"
+pass "reminder cli uses 24-hour time when the bar clock has the default format"
+
+CLOCK_FORMAT="'Wk' ww HH:mm" schedule "2026-10-12 13:41" 3:30pm
+grep -Fx "You'll be reminded today at 15:30" "$tmp_dir/notification.args" >/dev/null ||
+  fail "reminder cli ignores quoted text in the clock format" "$(cat "$tmp_dir/notification.args")"
+pass "reminder cli ignores quoted text in the clock format"
 
 schedule "2026-10-12 13:41" 3p
 assert_timer "--on-calendar=2026-10-12 19:00:00 UTC" "reminder cli reads a bare p as pm"

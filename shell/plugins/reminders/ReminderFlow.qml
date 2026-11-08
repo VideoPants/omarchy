@@ -1,4 +1,5 @@
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
 import qs.Commons
@@ -18,6 +19,9 @@ Item {
   property var when: null
   property string filterText: ""
   property date now: new Date()
+  // Times in the preview follow the bar clock's format, read on every open so
+  // a changed clock format applies to the next reminder.
+  property bool hour24: ReminderFlowModel.usesTwentyFourHour("")
   property string fontFamily: Style.font.menuFamily
 
   property color background: Commons.Color.menu.background
@@ -34,7 +38,7 @@ Item {
   readonly property string promptText: root.step === "message" ? I18n.t("reminders.messagePrompt") : I18n.t("reminders.whenPrompt")
   readonly property var pendingWhen: root.step === "message" ? root.when : ReminderFlowModel.parseWhen(root.filterText)
   readonly property string hintText: {
-    if (root.pendingWhen) return ReminderFlowModel.describe(root.pendingWhen, root.now, I18n.t)
+    if (root.pendingWhen) return ReminderFlowModel.describe(root.pendingWhen, root.now, I18n.t, root.hour24)
     return root.filterText.trim()
       ? I18n.t("reminders.notRecognized").arg(I18n.t("reminders.examples"))
       : I18n.t("reminders.examples")
@@ -50,8 +54,20 @@ Item {
     root.when = null
     root.filterText = ""
     root.now = new Date()
+    if (!clockFormatProc.running) clockFormatProc.running = true
 
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  // omarchy-bar exits 1 when the clock has no format of its own, which leaves
+  // the output empty and so means the bar's 24-hour default.
+  Process {
+    id: clockFormatProc
+    command: [root.omarchyPath + "/bin/omarchy-bar", "get", "omarchy.clock", "format"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.hour24 = ReminderFlowModel.usesTwentyFourHour(text.trim())
+    }
   }
 
   function close() {
