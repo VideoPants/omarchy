@@ -32,16 +32,21 @@ Item {
   readonly property int cornerRadius: Style.cornerRadius
   property int contentMargin: Style.spacing.panelPadding
   property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
-  property int cardWidth: Math.min(Style.space(300), panel.width - Style.gapsOut * 2)
+  // Wide enough for the prompt and the examples line in the current language,
+  // so neither is cut off, and never wider than the screen.
+  readonly property int textWidth: Math.ceil(Math.max(promptMetrics.advanceWidth, messagePromptMetrics.advanceWidth, hintMetrics.advanceWidth))
+  property int cardWidth: Math.min(Math.max(Style.space(300), textWidth + card.contentLeftInset + card.contentRightInset + Style.space(4)), panel.width - Style.gapsOut * 2)
   property int hintHeight: Style.font.body + Style.spacing.controlPaddingY * 2
   property int cardHeight: Math.min(contentMargin * 2 + headerHeight + hintHeight, panel.height - Style.gapsOut * 2)
   readonly property string promptText: root.step === "message" ? I18n.t("reminders.messagePrompt") : I18n.t("reminders.whenPrompt")
   readonly property var pendingWhen: root.step === "message" ? root.when : ReminderFlowModel.parseWhen(root.filterText)
+  // Examples show clock times the way the bar clock does.
+  readonly property string examplesText: root.hour24 ? I18n.t("reminders.examples24") : I18n.t("reminders.examples")
   readonly property string hintText: {
     if (root.pendingWhen) return ReminderFlowModel.describe(root.pendingWhen, root.now, I18n.t, root.hour24)
     return root.filterText.trim()
-      ? I18n.t("reminders.notRecognized").arg(I18n.t("reminders.examples"))
-      : I18n.t("reminders.examples")
+      ? I18n.t("reminders.notRecognized").arg(root.examplesText)
+      : root.examplesText
   }
 
   function open(payloadJson) {
@@ -57,6 +62,28 @@ Item {
     if (!clockFormatProc.running) clockFormatProc.running = true
 
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  TextMetrics {
+    id: promptMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.heading
+    text: I18n.t("reminders.whenPrompt")
+  }
+
+  TextMetrics {
+    id: messagePromptMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.heading
+    text: I18n.t("reminders.messagePrompt")
+  }
+
+  // The longest hint is the one for input that isn't recognized.
+  TextMetrics {
+    id: hintMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.body
+    text: I18n.t("reminders.notRecognized").arg(root.examplesText)
   }
 
   // omarchy-bar exits 1 when the clock has no format of its own, which leaves
@@ -103,7 +130,7 @@ Item {
         Quickshell.execDetached([
           root.omarchyPath + "/bin/omarchy-notification-send",
           I18n.t("reminders.invalidTitle"),
-          I18n.t("reminders.invalidBody").arg(I18n.t("reminders.examples"))
+          I18n.t("reminders.invalidBody").arg(root.examplesText)
         ])
         return
       }
