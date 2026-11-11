@@ -101,12 +101,14 @@ clock_time_epoch() {
 
 # Reminder times follow the bar clock, so they read the way the time on screen
 # does: 24-hour unless its Qt format has an AM/PM designator (A or a) outside
-# quoted text. omarchy-bar fails when the clock has no format of its own, which
-# means the bar's 24-hour default.
+# quoted text. A bar on the left or right shows the clock's vertical format.
+# omarchy-bar fails when the clock has no format of its own, which means the
+# bar's 24-hour default.
 clock_uses_24_hour() {
-  local format
+  local key=format format
 
-  format=$(omarchy-bar get omarchy.clock format 2>/dev/null) || format="dddd HH:mm"
+  [[ $(omarchy-bar position 2>/dev/null) =~ ^(left|right)$ ]] && key=verticalFormat
+  format=$(omarchy-bar get omarchy.clock "$key" 2>/dev/null) || format="HH:mm"
   format=$(sed "s/'[^']*'//g" <<<"$format")
   [[ ! $format =~ [Aa] ]]
 }

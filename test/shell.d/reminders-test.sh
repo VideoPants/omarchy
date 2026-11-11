@@ -132,12 +132,20 @@ STUB
 
 printf '#!/bin/bash\n' >"$tmp_dir/bin/omarchy-shell"
 
-# The bar clock's format, from CLOCK_FORMAT; unset means the clock has none of its own.
+# The bar's position, from BAR_POSITION (top by default), and the clock's
+# format, from CLOCK_FORMAT or VERTICAL_CLOCK_FORMAT; unset means the clock has
+# none of its own.
 cat >"$tmp_dir/bin/omarchy-bar" <<'STUB'
 #!/bin/bash
 
-[[ -n $CLOCK_FORMAT ]] || exit 1
-printf '%s\n' "$CLOCK_FORMAT"
+if [[ $1 == position ]]; then
+  printf '%s\n' "${BAR_POSITION:-top}"
+  exit
+fi
+format=$CLOCK_FORMAT
+[[ $3 == verticalFormat ]] && format=$VERTICAL_CLOCK_FORMAT
+[[ -n $format ]] || exit 1
+printf '%s\n' "$format"
 STUB
 chmod +x "$tmp_dir/bin/"*
 
@@ -184,6 +192,16 @@ CLOCK_FORMAT="'Wk' ww HH:mm" schedule "2026-10-12 13:41" 3:30pm
 grep -Fx "You'll be reminded today at 15:30" "$tmp_dir/notification.args" >/dev/null ||
   fail "reminder cli ignores quoted text in the clock format" "$(cat "$tmp_dir/notification.args")"
 pass "reminder cli ignores quoted text in the clock format"
+
+BAR_POSITION=left CLOCK_FORMAT="dddd HH:mm" VERTICAL_CLOCK_FORMAT="h:mm AP" schedule "2026-10-12 13:41" 3:30pm
+grep -Fx "You'll be reminded today at 3:30 PM" "$tmp_dir/notification.args" >/dev/null ||
+  fail "reminder cli follows the vertical clock on a side bar" "$(cat "$tmp_dir/notification.args")"
+pass "reminder cli follows the vertical clock on a side bar"
+
+BAR_POSITION=right CLOCK_FORMAT="h:mm AP" schedule "2026-10-12 13:41" 3:30pm
+grep -Fx "You'll be reminded today at 15:30" "$tmp_dir/notification.args" >/dev/null ||
+  fail "reminder cli uses the vertical clock's 24-hour default on a side bar" "$(cat "$tmp_dir/notification.args")"
+pass "reminder cli uses the vertical clock's 24-hour default on a side bar"
 
 schedule "2026-10-12 13:41" 3p
 assert_timer "--on-calendar=2026-10-12 19:00:00 UTC" "reminder cli reads a bare p as pm"

@@ -86,11 +86,14 @@ Item {
     text: I18n.t("reminders.notRecognized").arg(root.examplesText)
   }
 
-  // omarchy-bar exits 1 when the clock has no format of its own, which leaves
-  // the output empty and so means the bar's 24-hour default.
+  // A bar on the left or right shows the clock's vertical format. omarchy-bar
+  // exits 1 when the clock has no format of its own, which leaves the output
+  // empty and so means the bar's 24-hour default.
   Process {
     id: clockFormatProc
-    command: [root.omarchyPath + "/bin/omarchy-bar", "get", "omarchy.clock", "format"]
+    command: ["bash", "-c",
+      "key=format; [[ $(\"$0\" position 2>/dev/null) =~ ^(left|right)$ ]] && key=verticalFormat; \"$0\" get omarchy.clock \"$key\"",
+      root.omarchyPath + "/bin/omarchy-bar"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.hour24 = ReminderFlowModel.usesTwentyFourHour(text.trim())
