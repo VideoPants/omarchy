@@ -22,6 +22,9 @@ Item {
   // Times in the preview follow the bar clock's format, read on every open so
   // a changed clock format applies to the next reminder.
   property bool hour24: ReminderFlowModel.usesTwentyFourHour("")
+  // Set when the prompt opens while an earlier clock lookup is still running,
+  // so that lookup's answer, which may be out of date, is dropped for a new one.
+  property bool clockFormatStale: false
   property string fontFamily: Style.font.menuFamily
 
   property color background: Commons.Color.menu.background
@@ -59,7 +62,8 @@ Item {
     root.when = null
     root.filterText = ""
     root.now = new Date()
-    if (!clockFormatProc.running) clockFormatProc.running = true
+    if (clockFormatProc.running) root.clockFormatStale = true
+    else clockFormatProc.running = true
 
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -96,7 +100,14 @@ Item {
       root.omarchyPath + "/bin/omarchy-bar"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.hour24 = ReminderFlowModel.usesTwentyFourHour(text.trim())
+      onStreamFinished: {
+        if (!root.clockFormatStale) root.hour24 = ReminderFlowModel.usesTwentyFourHour(text.trim())
+      }
+    }
+    onExited: {
+      if (!root.clockFormatStale) return
+      root.clockFormatStale = false
+      clockFormatProc.running = true
     }
   }
 
