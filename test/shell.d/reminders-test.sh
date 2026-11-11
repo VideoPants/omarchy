@@ -160,6 +160,9 @@ assert_timer() {
 
 schedule "2026-10-12 13:41" 15 "Stretch"
 assert_timer "--on-active=15m" "reminder cli keeps minutes as a countdown"
+grep -Fx "You'll be reminded at 1:56 PM" "$tmp_dir/notification.args" >/dev/null ||
+  fail "reminder cli confirms a countdown in 12-hour time when the bar clock is 12-hour" "$(cat "$tmp_dir/notification.args")"
+pass "reminder cli confirms a countdown in 12-hour time when the bar clock is 12-hour"
 
 schedule "2026-10-12 13:41" 3:30pm
 assert_timer "--on-calendar=2026-10-12 19:30:00 UTC" "reminder cli schedules a time later today"
