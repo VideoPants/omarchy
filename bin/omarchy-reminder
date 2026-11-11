@@ -99,8 +99,26 @@ clock_time_epoch() {
   fi
 }
 
+# Reminder times follow the bar clock, so they read the way the time on screen
+# does: 24-hour unless its Qt format has an AM/PM designator (A or a) outside
+# quoted text. A bar on the left or right shows the clock's vertical format.
+# omarchy-bar fails when the clock has no format of its own, which means the
+# bar's 24-hour default.
+clock_uses_24_hour() {
+  local key=format format
+
+  [[ $(omarchy-bar position 2>/dev/null) =~ ^(left|right)$ ]] && key=verticalFormat
+  format=$(omarchy-bar get omarchy.clock "$key" 2>/dev/null) || format="HH:mm"
+  format=$(sed "s/'[^']*'//g" <<<"$format")
+  [[ ! $format =~ [Aa] ]]
+}
+
 local_clock() {
-  LC_TIME="$(omarchy-language locale)" date -d "@$1" '+%-I:%M %p'
+  if clock_uses_24_hour; then
+    date -d "@$1" +%H:%M
+  else
+    LC_TIME="$(omarchy-language locale)" date -d "@$1" '+%-I:%M %p'
+  fi
 }
 
 active_reminder_timers() {
@@ -253,7 +271,7 @@ set_at=$(date +%s)
 if [[ $when =~ ^[0-9]+$ ]] && ((10#$when > 0)); then
   minutes=$((10#$when))
   timer_spec="--on-active=${minutes}m"
-  confirmation=$(omarchy-i18n reminder.willRemindAt "$(date -d "@$((set_at + minutes * 60))" +%H:%M)")
+  confirmation=$(omarchy-i18n reminder.willRemindAt "$(local_clock "$((set_at + minutes * 60))")")
   confirmation_title=$(omarchy-i18n --count "$minutes" reminder.setForMinutes "$minutes")
   default_message=$(omarchy-i18n --count "$minutes" reminder.minutesUp "$minutes")
 elif [[ -n $when ]] && target=$(clock_time_epoch "$set_at" "$when"); then

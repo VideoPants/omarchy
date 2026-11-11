@@ -511,6 +511,7 @@
   "reminders.durationHm": "%1h %2m",
   "reminders.durationM": "%1m",
   "reminders.examples": "15 · 1h30m · 3:30pm · tomorrow 9am",
+  "reminders.examples24": "15 · 1h30m · 15:30 · tomorrow 9:00",
   "reminders.meridiemAm": "AM",
   "reminders.meridiemPm": "PM",
   "reminders.notRecognized": "Not recognized. Try %1",

@@ -1,4 +1,5 @@
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
 import qs.Commons
@@ -18,6 +19,12 @@ Item {
   property var when: null
   property string filterText: ""
   property date now: new Date()
+  // Times in the preview follow the bar clock's format, read on every open so
+  // a changed clock format applies to the next reminder.
+  property bool hour24: ReminderFlowModel.usesTwentyFourHour("")
+  // Set when the prompt opens while an earlier clock lookup is still running,
+  // so that lookup's answer, which may be out of date, is dropped for a new one.
+  property bool clockFormatStale: false
   property string fontFamily: Style.font.menuFamily
 
   property color background: Commons.Color.menu.background
@@ -28,16 +35,21 @@ Item {
   readonly property int cornerRadius: Style.cornerRadius
   property int contentMargin: Style.spacing.panelPadding
   property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
-  property int cardWidth: Math.min(Style.space(300), panel.width - Style.gapsOut * 2)
+  // Wide enough for the prompt and the examples line in the current language,
+  // so neither is cut off, and never wider than the screen.
+  readonly property int textWidth: Math.ceil(Math.max(promptMetrics.advanceWidth, messagePromptMetrics.advanceWidth, hintMetrics.advanceWidth))
+  property int cardWidth: Math.min(Math.max(Style.space(300), textWidth + card.contentLeftInset + card.contentRightInset + Style.space(4)), panel.width - Style.gapsOut * 2)
   property int hintHeight: Style.font.body + Style.spacing.controlPaddingY * 2
   property int cardHeight: Math.min(contentMargin * 2 + headerHeight + hintHeight, panel.height - Style.gapsOut * 2)
   readonly property string promptText: root.step === "message" ? I18n.t("reminders.messagePrompt") : I18n.t("reminders.whenPrompt")
   readonly property var pendingWhen: root.step === "message" ? root.when : ReminderFlowModel.parseWhen(root.filterText)
+  // Examples show clock times the way the bar clock does.
+  readonly property string examplesText: root.hour24 ? I18n.t("reminders.examples24") : I18n.t("reminders.examples")
   readonly property string hintText: {
-    if (root.pendingWhen) return ReminderFlowModel.describe(root.pendingWhen, root.now, I18n.t)
+    if (root.pendingWhen) return ReminderFlowModel.describe(root.pendingWhen, root.now, I18n.t, root.hour24)
     return root.filterText.trim()
-      ? I18n.t("reminders.notRecognized").arg(I18n.t("reminders.examples"))
-      : I18n.t("reminders.examples")
+      ? I18n.t("reminders.notRecognized").arg(root.examplesText)
+      : root.examplesText
   }
 
   function open(payloadJson) {
@@ -50,8 +62,53 @@ Item {
     root.when = null
     root.filterText = ""
     root.now = new Date()
+    if (clockFormatProc.running) root.clockFormatStale = true
+    else clockFormatProc.running = true
 
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  TextMetrics {
+    id: promptMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.heading
+    text: I18n.t("reminders.whenPrompt")
+  }
+
+  TextMetrics {
+    id: messagePromptMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.heading
+    text: I18n.t("reminders.messagePrompt")
+  }
+
+  // The longest hint is the one for input that isn't recognized.
+  TextMetrics {
+    id: hintMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.body
+    text: I18n.t("reminders.notRecognized").arg(root.examplesText)
+  }
+
+  // A bar on the left or right shows the clock's vertical format. omarchy-bar
+  // exits 1 when the clock has no format of its own, which leaves the output
+  // empty and so means the bar's 24-hour default.
+  Process {
+    id: clockFormatProc
+    command: ["bash", "-c",
+      "key=format; [[ $(\"$0\" position 2>/dev/null) =~ ^(left|right)$ ]] && key=verticalFormat; \"$0\" get omarchy.clock \"$key\"",
+      root.omarchyPath + "/bin/omarchy-bar"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (!root.clockFormatStale) root.hour24 = ReminderFlowModel.usesTwentyFourHour(text.trim())
+      }
+    }
+    onExited: {
+      if (!root.clockFormatStale) return
+      root.clockFormatStale = false
+      clockFormatProc.running = true
+    }
   }
 
   function close() {
@@ -87,7 +144,7 @@ Item {
         Quickshell.execDetached([
           root.omarchyPath + "/bin/omarchy-notification-send",
           I18n.t("reminders.invalidTitle"),
-          I18n.t("reminders.invalidBody").arg(I18n.t("reminders.examples"))
+          I18n.t("reminders.invalidBody").arg(root.examplesText)
         ])
         return
       }
